@@ -1,3 +1,4 @@
+
 export enum RevisionMode {
   SYNTHESIS = 'SYNTHESIS',
   QUIZ = 'QUIZ',
@@ -39,6 +40,21 @@ export interface Flashcard {
   topic: string;
 }
 
+export interface Folder {
+  id: string;
+  name: string;
+  createdAt: number;
+}
+
+export interface Exam {
+  id: string;
+  title: string;
+  date: string; // YYYY-MM-DD
+  courseIds: string[];
+  schedule?: string; // AI generated plan
+  createdAt: number;
+}
+
 export interface Course {
   id: string;
   title: string;
@@ -47,4 +63,6 @@ export interface Course {
   lastAccessedAt: number;
   report: SessionReport | null;
   flashcards: Flashcard[];
+  cheatSheet?: string; // Markdown content of the cheat sheet
+  folderId?: string; // Optional: if null, it's at the root
 }
