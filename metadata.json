@@ -1,0 +1,7 @@
+{
+  "name": "RévizIA - Assistant Pédagogique",
+  "description": "Un assistant vocal expert pour réviser la géopolitique basé sur vos documents.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
