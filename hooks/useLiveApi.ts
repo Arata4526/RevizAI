@@ -1,14 +1,22 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, Modality, Type } from '@google/genai';
 import { SYSTEM_INSTRUCTION_TEMPLATE, PROGRESS_TOOL_DECLARATION, FLASHCARDS_TOOL_DECLARATION, LANGUAGE_INSTRUCTIONS } from '../constants';
 import { base64ToUint8Array, decodeAudioData, createPcmBlob } from '../utils/audioUtils';
-import { SessionReport, Flashcard, Course, Folder, Exam } from '../types';
+import { SessionReport, Flashcard, Course, Folder, Exam, SkillData } from '../types';
 
 const COURSES_STORAGE_KEY = 'revizia_courses_db_v1';
 const FOLDERS_STORAGE_KEY = 'revizia_folders_db_v1';
 const EXAMS_STORAGE_KEY = 'revizia_exams_db_v1';
 
 export type Language = 'fr' | 'en' | 'es';
+
+// Helper robuste pour générer des IDs uniques même sans crypto.randomUUID (ex: contexte HTTP)
+const generateUUID = () => {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        try { return crypto.randomUUID(); } catch (e) { console.warn("crypto.randomUUID failed, using fallback"); }
+    }
+    return Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
+};
 
 export function useLiveApi() {
   // Connection State
@@ -118,7 +126,7 @@ export function useLiveApi() {
 
   // --- Folder Management ---
   const createFolder = useCallback((name: string) => {
-      setFolders(prev => [{ id: crypto.randomUUID(), name, createdAt: Date.now() }, ...prev]);
+      setFolders(prev => [{ id: generateUUID(), name, createdAt: Date.now() }, ...prev]);
   }, []);
 
   const deleteFolder = useCallback((folderId: string) => {
@@ -130,7 +138,7 @@ export function useLiveApi() {
   // --- Exam Management ---
   const createExam = useCallback((title: string, date: string, courseIds: string[]) => {
       const newExam: Exam = {
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           title,
           date,
           courseIds,
@@ -159,30 +167,21 @@ export function useLiveApi() {
           if (!apiKey) throw new Error("API Key not found");
           const ai = new GoogleGenAI({ apiKey });
 
-          // Construire un contexte massif avec tous les cours
           const coursesContext = relatedCourses.map(c => `--- COURS : ${c.title} ---\n${c.content.substring(0, 10000)}...`).join('\n\n');
           const today = new Date().toLocaleDateString();
 
           const prompt = `
           Tu es un coach d'étude expert en planification.
-          
           CONTEXTE:
           - Date d'aujourd'hui : ${today}
           - Date de l'examen : ${exam.date}
           - Matières à réviser : ${relatedCourses.map(c => c.title).join(', ')}
-          
           CONTENU DES COURS :
           ${coursesContext}
-
           TA MISSION :
-          Crée un programme de révision détaillé et réaliste jusqu'à la date de l'examen.
-          
+          Crée un programme de révision détaillé.
           DIRECTIVES :
-          1. Divise le temps restant de manière intelligente.
-          2. Alterne les matières pour éviter la saturation.
-          3. Prévois des sessions de "Révision active" (Quiz, Flashcards) et de "Lecture".
-          4. Structure la réponse en Markdown clair (Jours ou Semaines).
-          5. Sois encourageant.
+          Structure la réponse en Markdown clair (Jours ou Semaines).
           `;
 
           const response = await ai.models.generateContent({
@@ -203,10 +202,69 @@ export function useLiveApi() {
       }
   }, [exams, courses]);
 
+  // --- AI Analysis for Skills ---
+  const analyzeCourseSkills = useCallback(async (courseId: string, content: string) => {
+      try {
+          const apiKey = process.env.API_KEY;
+          if (!apiKey) return;
+          const ai = new GoogleGenAI({ apiKey });
+
+          const prompt = `
+          Analyse le cours suivant et identifie 4 à 6 compétences ou thèmes clés à maîtriser.
+          Retourne le résultat au format JSON uniquement.
+          Pour chaque compétence, donne un ID court (snake_case) et un Label clair.
+          
+          Cours:
+          ${content.substring(0, 20000)}...
+          `;
+
+          const response = await ai.models.generateContent({
+              model: 'gemini-3-pro-preview',
+              contents: prompt,
+              config: {
+                  responseMimeType: "application/json",
+                  responseSchema: {
+                      type: Type.OBJECT,
+                      properties: {
+                          skills: {
+                              type: Type.ARRAY,
+                              items: {
+                                  type: Type.OBJECT,
+                                  properties: {
+                                      id: { type: Type.STRING },
+                                      label: { type: Type.STRING }
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+          });
+          
+          if(response.text) {
+              const result = JSON.parse(response.text);
+              const initialScores: Record<string, SkillData> = {};
+              result.skills.forEach((s: any) => {
+                  initialScores[s.id] = { score: 0, label: s.label };
+              });
+              
+              setCourses(prev => prev.map(c => 
+                  c.id === courseId 
+                  ? { ...c, report: { scores: initialScores, summary: "Grille de compétences générée. En attente de la première session.", timestamp: Date.now() } } 
+                  : c
+              ));
+          }
+
+      } catch (e) {
+          console.error("Auto skill generation failed", e);
+      }
+  }, []);
+
+
   // --- Course Management ---
   const createCourse = useCallback((title: string, content: string, folderId?: string) => {
     const newCourse: Course = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       title,
       content,
       createdAt: Date.now(),
@@ -217,12 +275,16 @@ export function useLiveApi() {
     };
     setCourses(prev => [newCourse, ...prev]);
     setActiveCourseId(newCourse.id);
+    
+    // Trigger Auto-Analysis
+    analyzeCourseSkills(newCourse.id, content);
+
     return newCourse.id;
-  }, []);
+  }, [analyzeCourseSkills]);
 
   const deleteCourse = useCallback((id: string) => {
     setCourses(prev => prev.filter(c => c.id !== id));
-    setExams(prev => prev.map(e => ({...e, courseIds: e.courseIds.filter(cid => cid !== id)}))); // Clean exams
+    setExams(prev => prev.map(e => ({...e, courseIds: e.courseIds.filter(cid => cid !== id)})));
     if (activeCourseId === id) setActiveCourseId(null);
   }, [activeCourseId]);
 
@@ -264,20 +326,59 @@ export function useLiveApi() {
       }
   }, [activeCourse, updateActiveCourse]);
 
-  // --- Live API Logic (Existing code preserved) ---
-  // ... (Keep existing cleanup, connect, disconnect, sendTextCommand, finishSession as they were)
-  // Re-implementing briefly to ensure file integrity in output
+  // --- Audio Control ---
+  const stopAudioPlayback = useCallback(() => {
+      if (sourceNodesRef.current) {
+          sourceNodesRef.current.forEach(node => {
+              try { node.stop(); } catch (e) {}
+          });
+          sourceNodesRef.current.clear();
+      }
+      nextStartTimeRef.current = 0;
+      if (outputAudioContextRef.current) {
+          // Reset time logic slightly to prevent overlapping if rapid restart
+          nextStartTimeRef.current = outputAudioContextRef.current.currentTime;
+      }
+  }, []);
+
+
+  // --- Live API Logic ---
   const cleanup = useCallback(() => {
-    if (mediaStreamRef.current) mediaStreamRef.current.getTracks().forEach(t => t.stop());
-    if (scriptProcessorRef.current) scriptProcessorRef.current.disconnect();
-    if (inputSourceRef.current) inputSourceRef.current.disconnect();
-    if (inputAudioContextRef.current) inputAudioContextRef.current.close();
-    if (outputAudioContextRef.current) outputAudioContextRef.current.close();
-    if (sessionPromiseRef.current) sessionPromiseRef.current.then(s => s.close());
+    console.log("Cleanup initiated");
+    if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(t => t.stop());
+        mediaStreamRef.current = null;
+    }
+    if (scriptProcessorRef.current) {
+        scriptProcessorRef.current.disconnect();
+        scriptProcessorRef.current = null;
+    }
+    if (inputSourceRef.current) {
+        inputSourceRef.current.disconnect();
+        inputSourceRef.current = null;
+    }
+    // Check state before closing to avoid "Cannot close a closed AudioContext"
+    if (inputAudioContextRef.current && inputAudioContextRef.current.state !== 'closed') {
+        try { inputAudioContextRef.current.close(); } catch(e) { console.warn("Error closing input ctx", e); }
+    }
+    inputAudioContextRef.current = null;
+
+    if (outputAudioContextRef.current && outputAudioContextRef.current.state !== 'closed') {
+        try { outputAudioContextRef.current.close(); } catch(e) { console.warn("Error closing output ctx", e); }
+    }
+    outputAudioContextRef.current = null;
+
+    if (sessionPromiseRef.current) {
+        sessionPromiseRef.current.then(s => {
+             try { s.close(); } catch(e) { console.warn("Error closing session", e); }
+        });
+        sessionPromiseRef.current = null;
+    }
     setIsConnected(false); setIsStreaming(false); setVolume(0);
   }, []);
 
   const connect = useCallback(async () => {
+    console.log("Starting connection...");
     setError(null);
     const currentCourse = courses.find(c => c.id === activeCourseId);
     if (!currentCourse || !currentCourse.content) { setError("Contenu manquant."); return; }
@@ -286,9 +387,15 @@ export function useLiveApi() {
       if (!apiKey) throw new Error("API Key not found");
       const ai = new GoogleGenAI({ apiKey });
       
-      // Audio setup
+      console.log("Initializing Audio Contexts...");
       inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      // Important: Resume context to prevent it from being suspended by the browser
+      await inputAudioContextRef.current.resume();
+      
       outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      await outputAudioContextRef.current.resume();
+
+      console.log("Getting User Media...");
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
 
@@ -296,6 +403,15 @@ export function useLiveApi() {
           .replace('{{USER_CONTENT}}', currentCourse.content)
           .replace('{{LANGUAGE_INSTRUCTION}}', LANGUAGE_INSTRUCTIONS[language]);
       
+      // Inject existing skills context if available
+      if (currentCourse.report?.scores) {
+          const skillsContext = Object.entries(currentCourse.report.scores)
+              .map(([id, data]) => `- ${data.label} (ID: ${id})`)
+              .join('\n');
+          finalSystemInstruction += `\n\nVOICI LA GRILLE DE COMPÉTENCES DÉJÀ ÉTABLIE (utilise ces IDs pour saveProgress) :\n${skillsContext}`;
+      }
+
+      console.log("Connecting to Gemini Live...");
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         config: {
@@ -306,6 +422,7 @@ export function useLiveApi() {
         },
         callbacks: {
             onopen: async () => {
+                console.log("Session Opened");
                 setIsConnected(true); setIsStreaming(true);
                 const inputCtx = inputAudioContextRef.current;
                 if(!inputCtx) return;
@@ -323,20 +440,39 @@ export function useLiveApi() {
                 source.connect(processor); processor.connect(inputCtx.destination);
             },
             onmessage: async (msg: LiveServerMessage) => {
-                // ... (Tool calls and audio decoding logic same as before)
                 const outputCtx = outputAudioContextRef.current;
                 if (!outputCtx) return;
                 
                 if (msg.toolCall) {
-                   // ... (Implementation of saveProgress and createFlashcards same as previous)
+                   console.log("Tool call received:", msg.toolCall);
                    for (const fc of msg.toolCall.functionCalls) {
                         if (fc.name === 'saveProgress') {
-                            const updates = fc.args.updates as any;
-                            setCourses(curr => curr.map(c => c.id === activeCourseId ? { ...c, report: { scores: {...(c.report?.scores||{}), ...updates.reduce((acc:any, u:any)=>({...acc, [u.id]:{score:u.score, label:u.label}}), {})}, summary: fc.args.summary as string, timestamp: Date.now() } } : c));
+                            const args = fc.args as any;
+                            const updates = args.updates as {id: string, score: number, label: string}[];
+                            const summary = args.summary as string;
+
+                            setCourses(curr => curr.map(c => {
+                                if (c.id !== activeCourseId) return c;
+                                
+                                const currentScores = c.report?.scores || {};
+                                const newScores = updates.reduce((acc, u) => ({
+                                    ...acc,
+                                    [u.id]: { score: u.score, label: u.label }
+                                }), {} as Record<string, SkillData>);
+                                
+                                return {
+                                    ...c,
+                                    report: {
+                                        scores: { ...currentScores, ...newScores },
+                                        summary: summary,
+                                        timestamp: Date.now()
+                                    }
+                                };
+                            }));
                             sessionPromiseRef.current?.then(s => s.sendToolResponse({ functionResponses: [{id: fc.id, name: fc.name, response: {result: "OK"}}] }));
                         }
                         if (fc.name === 'createFlashcards') {
-                            const newCards = (fc.args.cards as any[]).map(c => ({...c, id: Math.random().toString(36).substr(2,9)}));
+                            const newCards = ((fc.args as any).cards as any[]).map(c => ({...c, id: Math.random().toString(36).substr(2,9)}));
                             setCourses(curr => curr.map(c => c.id === activeCourseId ? { ...c, flashcards: [...c.flashcards, ...newCards] } : c));
                             sessionPromiseRef.current?.then(s => s.sendToolResponse({ functionResponses: [{id: fc.id, name: fc.name, response: {result: "OK"}}] }));
                         }
@@ -349,17 +485,36 @@ export function useLiveApi() {
                     source.buffer = audioBuffer;
                     source.playbackRate.value = speechRateRef.current;
                     source.connect(outputCtx.destination);
+                    source.addEventListener('ended', () => sourceNodesRef.current.delete(source));
                     source.start(nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputCtx.currentTime));
                     nextStartTimeRef.current += audioBuffer.duration / speechRateRef.current;
+                    sourceNodesRef.current.add(source);
+                }
+
+                if (msg.serverContent?.interrupted) {
+                    console.log("Model interrupted");
+                    stopAudioPlayback();
                 }
             },
-            onclose: () => { setIsConnected(false); setIsStreaming(false); },
-            onerror: () => { cleanup(); }
+            onclose: (e) => { 
+                console.log("Session Closed", e.code, e.reason); 
+                setIsConnected(false); 
+                setIsStreaming(false); 
+            },
+            onerror: (err) => { 
+                console.error("Session Error", err); 
+                setError("Erreur de connexion Live API. Voir console.");
+                cleanup(); 
+            }
         }
       });
       sessionPromiseRef.current = sessionPromise;
-    } catch (e) { cleanup(); }
-  }, [cleanup, activeCourseId, courses, language]);
+    } catch (e: any) { 
+        console.error("Connection failed", e);
+        setError("Impossible de se connecter: " + e.message);
+        cleanup(); 
+    }
+  }, [cleanup, activeCourseId, courses, language, stopAudioPlayback]);
 
   const disconnect = useCallback(() => cleanup(), [cleanup]);
   const sendTextCommand = useCallback((text: string) => sessionPromiseRef.current?.then(s => s.sendRealtimeInput({ content: [{ text }] })), []);
@@ -372,6 +527,6 @@ export function useLiveApi() {
     createFolder, deleteFolder,
     createExam, deleteExam, generateExamSchedule, isGeneratingSchedule,
     exitSession: () => { disconnect(); setActiveCourseId(null); },
-    generateCheatSheet, isGeneratingSheet
+    generateCheatSheet, isGeneratingSheet, stopAudioPlayback
   };
 }

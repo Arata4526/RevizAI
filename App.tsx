@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Mic, MicOff, AlertCircle, BookOpen, Award, Save, LayoutDashboard, BrainCircuit, Layers, RotateCw, Trash2, ArrowLeft, ArrowRight, Upload, Plus, FileText, Loader2, X, Home, GraduationCap, ChevronRight, Sparkles, Folder as FolderIcon, FolderPlus, MoreVertical, Download, Calendar as CalendarIcon, Clock, CheckSquare } from 'lucide-react';
+import { Mic, MicOff, AlertCircle, BookOpen, Award, Save, LayoutDashboard, BrainCircuit, Layers, RotateCw, Trash2, ArrowLeft, ArrowRight, Upload, Plus, FileText, Loader2, X, Home, GraduationCap, ChevronRight, Sparkles, Folder as FolderIcon, FolderPlus, MoreVertical, Download, Calendar as CalendarIcon, Clock, CheckSquare, Square } from 'lucide-react';
 import { useLiveApi, Language } from './hooks/useLiveApi';
 import { Visualizer } from './components/Visualizer';
 import { ModeSelector } from './components/ModeSelector';
 import { parseFile } from './utils/fileParsing';
 import { generatePDF } from './utils/pdfGenerator';
-import { Course } from './types';
+import { Course, SkillData } from './types';
 
 type Tab = 'session' | 'competences' | 'flashcards' | 'cheatsheet';
 type View = 'dashboard' | 'create' | 'session' | 'calendar';
@@ -58,7 +58,7 @@ const LoadingScreen = () => (
   </div>
 );
 
-const ScoreBar = ({ score, label }: { score: number, label: string }) => {
+const ScoreBar: React.FC<{ score: number, label: string }> = ({ score, label }) => {
   let colorClass = "bg-slate-200";
   let statusLabel = "Non évalué";
   let width = "0%";
@@ -126,7 +126,8 @@ export default function App() {
     createCourse, deleteCourse, selectCourse, clearFlashcards,
     createFolder, deleteFolder, exitSession,
     generateCheatSheet, isGeneratingSheet,
-    createExam, deleteExam, generateExamSchedule, isGeneratingSchedule
+    createExam, deleteExam, generateExamSchedule, isGeneratingSchedule,
+    stopAudioPlayback
   } = useLiveApi();
 
   const [activeTab, setActiveTab] = useState<Tab>('session');
@@ -270,7 +271,7 @@ export default function App() {
     }
   };
 
-  const activeSkillsList = activeCourse?.report?.scores ? Object.values(activeCourse.report.scores) : [];
+  const activeSkillsList: SkillData[] = activeCourse?.report?.scores ? Object.values(activeCourse.report.scores) : [];
   const activeAverage = activeSkillsList.length > 0 ? Math.round((activeSkillsList.reduce((acc, curr) => acc + curr.score, 0) / (activeSkillsList.length * 5)) * 100) : 0;
 
   // Filter Data based on navigation
@@ -278,7 +279,7 @@ export default function App() {
   const currentFolder = folders.find(f => f.id === currentFolderId);
 
   // Global stats calculations (all courses)
-  const allScores = courses.flatMap(c => c.report ? Object.values(c.report.scores).map(s => s.score) : []);
+  const allScores = courses.flatMap(c => c.report ? Object.values(c.report.scores).map((s: SkillData) => s.score) : []);
   const globalAverage = allScores.length > 0 ? Math.round((allScores.reduce((a, b) => a + b, 0) / (allScores.length * 5)) * 100) : 0;
   const masteredSkills = allScores.filter(s => s >= 4).length;
 
@@ -299,9 +300,8 @@ export default function App() {
     );
   }
 
-  // ---------------- VIEW: DASHBOARD & CALENDAR ----------------
-  if (view === 'dashboard' || view === 'calendar') {
-    return (
+  // ---------------- MAIN APP VIEW ----------------
+  return (
         <div className="relative flex flex-col h-screen overflow-hidden bg-slate-50">
             {/* Background Ambient Effect */}
             <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
@@ -398,6 +398,7 @@ export default function App() {
                     </div>
                 )}
 
+                {(view === 'dashboard' || view === 'calendar') && (
                 <header className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div className="flex items-center gap-2">
                         {currentFolderId && view === 'dashboard' ? (
@@ -446,6 +447,7 @@ export default function App() {
                         )}
                     </div>
                 </header>
+                )}
 
                 {/* === VIEW: CALENDAR === */}
                 {view === 'calendar' && (
@@ -591,7 +593,10 @@ export default function App() {
                         ) : (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-10">
                                 {visibleCourses.map(course => {
-                                    const courseScore = course.report ? Math.round((Object.values(course.report.scores).reduce((a,b)=>a+b.score,0) / (Object.values(course.report.scores).length*5 || 1)) * 100) : 0;
+                                    const scores: SkillData[] = course.report ? Object.values(course.report.scores) : [];
+                                    const totalScore = scores.reduce((acc, curr) => acc + curr.score, 0);
+                                    const maxScore = (scores.length * 5) || 1;
+                                    const courseScore = course.report ? Math.round((totalScore / maxScore) * 100) : 0;
                                     return (
                                         <div key={course.id} className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-sm border border-slate-100 p-6 hover:shadow-xl hover:shadow-indigo-500/10 hover:border-indigo-100 transition-all duration-300 flex flex-col justify-between group cursor-pointer" onClick={() => selectCourse(course.id)}>
                                             <div>
@@ -635,250 +640,386 @@ export default function App() {
                     </div>
                     </>
                 )}
-            </div>
-        </div>
-    );
-  }
 
-  // ---------------- VIEW: CREATE ----------------
-  if (view === 'create') {
-    return (
-        <div className="flex flex-col h-screen bg-slate-50 overflow-y-auto">
-            <div className="max-w-3xl mx-auto w-full p-6 my-8">
-                <button onClick={() => setView('dashboard')} className="flex items-center gap-2 text-slate-500 hover:text-slate-800 mb-8 transition-colors font-medium px-4 py-2 hover:bg-slate-200 rounded-lg w-fit">
-                    <ArrowLeft size={18} />
-                    Retour
-                </button>
-                <div className="text-center mb-10">
-                  <h1 className="text-4xl font-extrabold text-slate-900 mb-3 tracking-tight">Nouveau Cours</h1>
-                  {currentFolderId && <p className="text-indigo-600 font-bold bg-indigo-50 inline-block px-3 py-1 rounded-full text-sm mb-2">Dans : {folders.find(f => f.id === currentFolderId)?.name}</p>}
-                  <p className="text-slate-500 text-lg">Importez vos documents pour créer un espace de révision dédié.</p>
-                </div>
-
-                <div className="bg-white rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-200 p-10 space-y-8">
-                    <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-3 uppercase tracking-wide">Titre du sujet</label>
-                        <input type="text" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none font-medium text-slate-800" placeholder="Ex: Droit Constitutionnel..." value={inputTopic} onChange={(e) => setInputTopic(e.target.value)} />
-                    </div>
-                    
-                    <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-3 uppercase tracking-wide">Contenu</label>
-                        <div className="relative mb-6 group" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
-                           <input type="file" ref={fileInputRef} onChange={(e) => processFiles(e.target.files ? Array.from(e.target.files) : [])} accept=".pdf,.docx,.odt,.txt,.md,.json" className="hidden" multiple />
-                           <div className="border-3 border-dashed border-indigo-100 bg-indigo-50/30 rounded-2xl p-10 text-center transition-all hover:border-indigo-400 hover:bg-indigo-50 cursor-pointer group-hover:shadow-inner" onClick={() => fileInputRef.current?.click()}>
-                              {isProcessingFile ? (
-                                  <div className="flex flex-col items-center justify-center py-6"><Loader2 className="animate-spin text-indigo-600 w-10 h-10 mb-4" /><p className="text-indigo-800 font-bold">Analyse...</p></div>
-                              ) : (
-                                  <>
-                                      <div className="w-16 h-16 bg-white shadow-sm text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Upload size={32} /></div>
-                                      <p className="text-lg font-bold text-slate-800 mb-1">Ajouter vos documents</p>
-                                  </>
-                              )}
-                           </div>
+                {/* === VIEW: CREATE === */}
+                {view === 'create' && (
+                    <div className="max-w-3xl mx-auto w-full animate-in fade-in slide-in-from-bottom-8 duration-500">
+                        <div className="flex items-center gap-4 mb-8">
+                            <button onClick={() => setView('dashboard')} className="p-3 rounded-xl border bg-white hover:bg-slate-50 text-slate-600 transition-colors">
+                                <ArrowLeft size={20} />
+                            </button>
+                            <div>
+                                <h2 className="text-2xl font-bold text-slate-900">Ajouter un nouveau cours</h2>
+                                <p className="text-slate-500">Importez vos documents ou collez votre contenu</p>
+                            </div>
                         </div>
-                        {fileError && <div className="mb-6 bg-red-50 text-red-600 p-4 rounded-xl text-sm flex items-start gap-3 border border-red-100"><AlertCircle size={20} />{fileError}</div>}
-                        <textarea className="w-full p-5 bg-slate-50 border border-slate-200 rounded-xl h-48 focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none resize-none text-sm text-slate-700 font-mono" placeholder="Texte extrait..." value={inputContent} onChange={(e) => setInputContent(e.target.value)}></textarea>
-                    </div>
 
-                    <button onClick={handleCreateCourse} disabled={isProcessingFile} className={`w-full bg-indigo-600 hover:bg-indigo-700 text-white text-lg font-bold py-4 rounded-2xl shadow-xl shadow-indigo-200 transition-all flex items-center justify-center gap-3 transform hover:-translate-y-1 active:translate-y-0 ${isProcessingFile ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                        Créer le Cours <ChevronRight size={20} />
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-  }
+                        <div className="space-y-6">
+                            <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+                                <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">Sujet du cours</label>
+                                <input 
+                                    type="text" 
+                                    className="w-full bg-slate-50 border-transparent focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 rounded-xl p-4 text-slate-900 font-medium transition-all"
+                                    placeholder="Ex: Géopolitique - La Guerre Froide"
+                                    value={inputTopic}
+                                    onChange={(e) => setInputTopic(e.target.value)}
+                                />
+                            </div>
 
-  // ---------------- VIEW: SESSION ----------------
-  if (!activeCourse) return null;
+                            <div 
+                                className={`
+                                    relative border-3 border-dashed rounded-3xl p-10 text-center transition-all duration-300
+                                    ${isProcessingFile ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200 bg-white hover:border-indigo-400 hover:bg-slate-50'}
+                                `}
+                                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                                onDrop={handleDrop}
+                            >
+                                <input 
+                                    type="file" 
+                                    ref={fileInputRef}
+                                    onChange={(e) => { if(e.target.files) processFiles(Array.from(e.target.files)) }} 
+                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" 
+                                    multiple 
+                                    accept=".pdf,.docx,.txt,.md,.odt"
+                                />
+                                {isProcessingFile ? (
+                                    <div className="flex flex-col items-center animate-pulse">
+                                        <Loader2 className="animate-spin text-indigo-600 mb-4" size={48} />
+                                        <p className="font-bold text-indigo-900">Lecture et analyse en cours...</p>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col items-center">
+                                        <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center mb-4 text-indigo-600">
+                                            <Upload size={32} />
+                                        </div>
+                                        <h3 className="font-bold text-slate-800 text-lg mb-2">Glissez vos fichiers ici</h3>
+                                        <p className="text-slate-500 text-sm max-w-xs mx-auto mb-6">Supporte PDF, Word, ODT, Texte. L'IA analysera automatiquement le contenu.</p>
+                                        <button className="px-6 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm relative z-20 pointer-events-none">
+                                            Parcourir les fichiers
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
 
-  return (
-    <div className="flex flex-col h-screen max-w-5xl mx-auto px-4 py-4 md:py-8 bg-slate-50">
-      <header className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4 flex-shrink-0">
-        <div className="flex items-center gap-4 overflow-hidden w-full md:w-auto">
-          <button onClick={exitSession} className="p-3 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-colors shadow-sm shrink-0"><Home className="text-slate-600 w-5 h-5" /></button>
-          <div className="min-w-0">
-            <h1 className="text-2xl font-extrabold text-slate-900 truncate tracking-tight">{activeCourse.title}</h1>
-            <p className="text-xs text-indigo-600 font-bold uppercase tracking-wider mt-1">Session active</p>
-          </div>
-        </div>
+                            {fileError && (
+                                <div className="bg-red-50 border border-red-100 text-red-600 p-4 rounded-xl flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
+                                    <AlertCircle size={20} />
+                                    <span className="font-medium text-sm">{fileError}</span>
+                                </div>
+                            )}
 
-        <div className="flex items-center gap-3 w-full md:w-auto justify-end">
-            <div className="flex items-center bg-white border border-slate-200 rounded-full p-1.5 shadow-sm gap-2">
-                <button onClick={() => !isConnected && setLanguage('fr')} disabled={isConnected} className={`p-1 rounded-full transition-all border-2 ${language === 'fr' ? 'border-indigo-500 scale-110 shadow-md' : 'border-transparent opacity-60 hover:opacity-100'}`} title="Français">
-                   <FlagFR />
-                </button>
-                <button onClick={() => !isConnected && setLanguage('en')} disabled={isConnected} className={`p-1 rounded-full transition-all border-2 ${language === 'en' ? 'border-indigo-500 scale-110 shadow-md' : 'border-transparent opacity-60 hover:opacity-100'}`} title="English">
-                   <FlagEN />
-                </button>
-                 <button onClick={() => !isConnected && setLanguage('es')} disabled={isConnected} className={`p-1 rounded-full transition-all border-2 ${language === 'es' ? 'border-indigo-500 scale-110 shadow-md' : 'border-transparent opacity-60 hover:opacity-100'}`} title="Español">
-                   <FlagES />
-                </button>
-            </div>
-            <div className={`shrink-0 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 border shadow-sm transition-colors ${isConnected ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-slate-200 text-slate-500'}`}>
-              <div className={`w-2.5 h-2.5 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-slate-400'}`}></div>
-              {isConnected ? 'LIVE' : 'OFFLINE'}
-            </div>
-        </div>
-      </header>
+                            <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+                                <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">Contenu (Texte brut ou extrait)</label>
+                                <textarea 
+                                    className="w-full h-64 bg-slate-50 border-transparent focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 rounded-xl p-4 text-slate-900 font-mono text-sm leading-relaxed transition-all resize-none"
+                                    placeholder="Le contenu de vos documents apparaîtra ici. Vous pouvez aussi copier-coller votre cours."
+                                    value={inputContent}
+                                    onChange={(e) => setInputContent(e.target.value)}
+                                />
+                            </div>
 
-      {/* Tabs */}
-      <nav className="flex mb-6 bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm flex-shrink-0">
-        <button onClick={() => setActiveTab('session')} className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-bold rounded-xl transition-all ${activeTab === 'session' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`}><Mic size={18} /> Oral</button>
-        <button onClick={() => setActiveTab('competences')} className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-bold rounded-xl transition-all ${activeTab === 'competences' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`}><LayoutDashboard size={18} /> Bilan</button>
-        <button onClick={() => setActiveTab('flashcards')} className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-bold rounded-xl transition-all ${activeTab === 'flashcards' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`}><Layers size={18} /> Cartes {activeCourse.flashcards.length > 0 && <span className="bg-indigo-600 text-white text-[10px] py-0.5 px-1.5 rounded-md ml-1 shadow-sm">{activeCourse.flashcards.length}</span>}</button>
-        <button onClick={() => setActiveTab('cheatsheet')} className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-bold rounded-xl transition-all ${activeTab === 'cheatsheet' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`}><FileText size={18} /> Fiche</button>
-      </nav>
-
-      {/* Content Area */}
-      <main className="flex-1 overflow-hidden flex flex-col min-h-0 relative">
-        {error && <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-red-50 text-red-600 px-6 py-3 rounded-full shadow-lg border border-red-100 flex items-center gap-3 animate-in slide-in-from-top-4 fade-in"><AlertCircle size={20} /><p className="font-medium text-sm">{error}</p></div>}
-
-        {activeTab === 'session' ? (
-          <div className="flex flex-col h-full gap-6 overflow-y-auto pb-4 scrollbar-hide">
-            <div className="bg-white rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 p-8 flex flex-col items-center justify-center relative overflow-hidden shrink-0 min-h-[380px]">
-              <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] bg-indigo-500/10 rounded-full blur-[80px] transition-opacity duration-700 ${isStreaming ? 'opacity-100' : 'opacity-0'}`}></div>
-              <div className="absolute top-6 right-6 flex bg-white/50 backdrop-blur-md rounded-xl border border-slate-100 p-1 z-20 shadow-sm">
-                 {[1.0, 1.2, 1.5].map(rate => (<button key={rate} onClick={() => setSpeechRate(rate)} className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${speechRate === rate ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>{rate}x</button>))}
-              </div>
-
-              <div className="relative z-10 w-full max-w-md text-center">
-                {isConnected ? (
-                    <div className="animate-in fade-in zoom-in duration-500">
-                        <h2 className="text-3xl font-bold text-slate-800 mb-3 tracking-tight">{language === 'fr' ? "Je vous écoute..." : language === 'en' ? "I'm listening..." : "Te escucho..."}</h2>
-                        <p className="text-slate-500 mb-10 text-lg">{language === 'fr' ? "Choisissez un mode ou posez une question." : language === 'en' ? "Choose a mode or ask a question." : "Elige un modo o haz una pregunta."}</p>
-                    </div>
-                ) : (
-                    <div className="animate-in fade-in zoom-in duration-500">
-                        <h2 className="text-3xl font-bold text-slate-800 mb-3 tracking-tight">Prêt à réviser ?</h2>
-                        <p className="text-slate-500 mb-10 text-lg">Lancez l'assistant vocal pour commencer.</p>
+                            <div className="flex justify-end pt-4 pb-12">
+                                <button 
+                                    onClick={handleCreateCourse} 
+                                    disabled={!inputTopic.trim() || !inputContent.trim()}
+                                    className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-8 py-4 rounded-xl font-bold text-lg shadow-xl shadow-indigo-200 transition-all hover:-translate-y-1 active:translate-y-0"
+                                >
+                                    Créer le cours
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 )}
-                <div className="mb-14 min-h-[120px] flex items-center justify-center"><Visualizer volume={volume} isActive={isStreaming} /></div>
-                <div className="flex justify-center gap-4">
-                  {!isConnected ? (
-                    <button onClick={connect} className="group flex items-center gap-3 bg-slate-900 text-white hover:bg-indigo-600 font-bold py-4 px-10 rounded-full transition-all shadow-xl shadow-slate-300 hover:shadow-indigo-300 hover:-translate-y-1"><Mic size={22} className="group-hover:animate-pulse" /> Démarrer</button>
-                  ) : (
-                    <>
-                      <button onClick={finishSession} className="flex items-center gap-2 bg-white text-amber-600 border-2 border-amber-100 hover:bg-amber-50 font-bold py-3 px-6 rounded-full transition-all shadow-sm hover:shadow-amber-100"><Save size={20} /> Stop</button>
-                      <button onClick={disconnect} className="flex items-center gap-2 bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600 font-bold py-3 px-6 rounded-full transition-all border border-red-100"><MicOff size={20} /></button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div className="flex-1 pb-10">
-              <div className="flex items-center gap-3 mb-6 px-2"><div className="p-1.5 bg-indigo-50 rounded-lg text-indigo-600"><BrainCircuit size={18} /></div><h3 className="text-sm font-bold text-slate-600 uppercase tracking-widest">Modes d'Interrogation</h3></div>
-              <ModeSelector onSelectMode={(prompt) => sendTextCommand(prompt)} disabled={!isConnected} />
-            </div>
-          </div>
-        ) : activeTab === 'competences' ? (
-          <div className="flex flex-col h-full overflow-y-auto pb-4 scrollbar-hide">
-             <div className="bg-gradient-to-br from-indigo-600 to-violet-600 rounded-3xl p-8 text-white shadow-xl shadow-indigo-200 mb-8 flex items-center justify-between shrink-0 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2 blur-3xl"></div>
-                <div className="relative z-10"><h2 className="text-2xl font-bold mb-1 tracking-tight">Maîtrise du Cours</h2><p className="text-indigo-100 font-medium opacity-90">{activeCourse.title}</p></div>
-                <div className="relative z-10 text-5xl font-black tracking-tighter">{activeAverage}<span className="text-2xl opacity-60">%</span></div>
-             </div>
-             {activeCourse.report?.summary && <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm mb-8 shrink-0 relative"><div className="flex items-center gap-3 mb-3"><div className="p-2 bg-amber-50 text-amber-500 rounded-xl"><Award size={20} /></div><h3 className="font-bold text-slate-800">Dernier Bilan</h3></div><p className="text-slate-600 leading-relaxed italic pl-2 border-l-4 border-amber-200">"{activeCourse.report.summary}"</p></div>}
-             <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden p-8">
-                 <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><BrainCircuit size={20} className="text-slate-400" /> Compétences Identifiées</h3>
-                 {activeSkillsList.length > 0 ? (<div className="space-y-8">{activeSkillsList.map((skill, idx) => (<ScoreBar key={idx} score={skill.score} label={skill.label} />))}</div>) : (<div className="text-center py-12 bg-slate-50 rounded-2xl border border-dashed border-slate-200"><p className="text-slate-500 font-medium">Aucune compétence évaluée.</p></div>)}
-             </div>
-          </div>
-        ) : activeTab === 'flashcards' ? (
-          <div className="flex flex-col h-full items-center justify-center relative p-4">
-             {activeCourse.flashcards.length === 0 ? (
-               <div className="text-center max-w-md bg-white p-10 rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100">
-                 <div className="bg-indigo-50 p-6 rounded-full inline-flex mb-6 text-indigo-500"><Layers size={48} /></div>
-                 <h2 className="text-2xl font-bold text-slate-900 mb-2">Aucune carte</h2>
-                 <p className="text-slate-500 mb-8 leading-relaxed">Demandez à l'assistant de générer des cartes.</p>
-                 <button onClick={() => { setActiveTab('session'); sendTextCommand("Génère 5 flashcards sur ce cours."); }} className="bg-indigo-600 text-white px-8 py-4 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg hover:shadow-indigo-300 hover:-translate-y-1 flex items-center gap-3 mx-auto"><RotateCw size={20} /> Générer via IA</button>
-               </div>
-             ) : (
-               <div className="w-full max-w-xl flex flex-col items-center gap-10 perspective-1000">
-                  <div className="w-full flex justify-between items-center px-4"><span className="text-sm font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">{activeCourse.flashcards[currentCardIndex].topic}</span><span className="text-sm font-bold text-slate-400">{currentCardIndex + 1} / {activeCourse.flashcards.length}</span></div>
-                  <div className="w-full aspect-[16/10] relative cursor-pointer group perspective" onClick={() => setIsFlipped(!isFlipped)}>
-                    <div className={`w-full h-full transition-all duration-700 preserve-3d relative ${isFlipped ? 'rotate-y-180' : ''}`} style={{ transformStyle: 'preserve-3d', transform: isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)' }}>
-                        <div className="absolute inset-0 bg-white rounded-3xl shadow-2xl shadow-slate-200/60 border border-slate-100 p-10 flex flex-col items-center justify-center text-center" style={{ backfaceVisibility: 'hidden' }}>
-                            <h3 className="text-slate-400 text-xs font-black uppercase tracking-[0.2em] mb-6">Question</h3>
-                            <p className="text-2xl font-bold text-slate-800 leading-snug">{activeCourse.flashcards[currentCardIndex].question}</p>
+
+                {/* === VIEW: SESSION === */}
+                {view === 'session' && activeCourse && (
+                    <div className="h-[calc(100vh-140px)] flex flex-col animate-in fade-in duration-500">
+                        {/* Session Header */}
+                        <div className="flex items-center justify-between mb-6 bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                            <div className="flex items-center gap-4 min-w-0">
+                                <button onClick={exitSession} className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-500">
+                                    <Home size={24} />
+                                </button>
+                                <div className="h-8 w-px bg-slate-200 mx-2 hidden md:block"></div>
+                                <div className="min-w-0">
+                                    <h2 className="font-bold text-lg text-slate-900 truncate">{activeCourse.title}</h2>
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-2 h-2 rounded-full animate-pulse ${isConnected ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
+                                        <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                                            {isConnected ? (isStreaming ? 'En écoute' : 'Connecté') : 'Déconnecté'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-3 pl-4">
+                                <div className="hidden md:flex bg-slate-100 rounded-lg p-1">
+                                    <button onClick={() => setLanguage('fr')} className={`p-1.5 rounded transition-all ${language === 'fr' ? 'bg-white shadow-sm ring-1 ring-black/5' : 'opacity-50 hover:opacity-100'}`}><FlagFR/></button>
+                                    <button onClick={() => setLanguage('en')} className={`p-1.5 rounded transition-all ${language === 'en' ? 'bg-white shadow-sm ring-1 ring-black/5' : 'opacity-50 hover:opacity-100'}`}><FlagEN/></button>
+                                    <button onClick={() => setLanguage('es')} className={`p-1.5 rounded transition-all ${language === 'es' ? 'bg-white shadow-sm ring-1 ring-black/5' : 'opacity-50 hover:opacity-100'}`}><FlagES/></button>
+                                </div>
+                                
+                                {isConnected ? (
+                                    <button onClick={finishSession} className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-xl font-bold transition-colors flex items-center gap-2">
+                                        <Save size={18} />
+                                        <span className="hidden md:inline">Finir & Sauvegarder</span>
+                                    </button>
+                                ) : (
+                                    <button onClick={connect} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-indigo-200 transition-all flex items-center gap-2 hover:-translate-y-0.5 active:translate-y-0">
+                                        <Sparkles size={18} />
+                                        <span className="hidden md:inline">Démarrer la session</span>
+                                        <span className="md:hidden">Start</span>
+                                    </button>
+                                )}
+                            </div>
                         </div>
-                        <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 to-violet-700 rounded-3xl shadow-2xl shadow-indigo-200 p-10 flex flex-col items-center justify-center text-center text-white" style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}>
-                            <h3 className="text-indigo-200 text-xs font-black uppercase tracking-[0.2em] mb-6">Réponse</h3>
-                            <p className="text-xl font-medium leading-relaxed">{activeCourse.flashcards[currentCardIndex].answer}</p>
+
+                        {/* Error Message */}
+                        {error && (
+                            <div className="mb-6 bg-red-50 border border-red-100 p-4 rounded-xl flex items-center justify-between text-red-800 animate-in fade-in slide-in-from-top-2">
+                                <div className="flex items-center gap-3">
+                                    <AlertCircle size={20} />
+                                    <span className="font-medium">{error}</span>
+                                </div>
+                                <button onClick={disconnect} className="text-sm font-bold underline hover:text-red-900">Réessayer</button>
+                            </div>
+                        )}
+
+                        {/* Tabs Navigation */}
+                        <div className="flex gap-1 mb-6 overflow-x-auto pb-2 scrollbar-hide">
+                            <button onClick={() => setActiveTab('session')} className={`px-5 py-2.5 rounded-xl font-bold text-sm whitespace-nowrap transition-all flex items-center gap-2 ${activeTab === 'session' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                                <Mic size={16} /> Session Vocale
+                            </button>
+                            <button onClick={() => setActiveTab('competences')} className={`px-5 py-2.5 rounded-xl font-bold text-sm whitespace-nowrap transition-all flex items-center gap-2 ${activeTab === 'competences' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                                <Award size={16} /> Compétences
+                            </button>
+                            <button onClick={() => setActiveTab('flashcards')} className={`px-5 py-2.5 rounded-xl font-bold text-sm whitespace-nowrap transition-all flex items-center gap-2 ${activeTab === 'flashcards' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                                <Layers size={16} /> Flashcards
+                                <span className="bg-white/20 px-1.5 py-0.5 rounded text-xs ml-1">{activeCourse.flashcards.length}</span>
+                            </button>
+                            <button onClick={() => setActiveTab('cheatsheet')} className={`px-5 py-2.5 rounded-xl font-bold text-sm whitespace-nowrap transition-all flex items-center gap-2 ${activeTab === 'cheatsheet' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                                <FileText size={16} /> Fiche Révision
+                            </button>
                         </div>
+
+                        {/* Tab Content: Session */}
+                        {activeTab === 'session' && (
+                            <div className="flex-1 bg-white rounded-3xl shadow-sm border border-slate-100 p-8 flex flex-col items-center justify-center relative overflow-hidden">
+                                {isConnected ? (
+                                    <>
+                                        <div className="absolute top-6 left-6 flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-100">
+                                             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                                             <span className="text-xs font-bold text-slate-600">LIVE</span>
+                                        </div>
+                                        
+                                        <div className="w-full max-w-2xl mb-12">
+                                             <Visualizer volume={volume} isActive={isStreaming} />
+                                        </div>
+                                        
+                                        <div className="w-full max-w-4xl">
+                                            <p className="text-center text-slate-400 text-sm font-medium mb-6 uppercase tracking-wider">Sélectionnez un mode d'interaction</p>
+                                            <ModeSelector onSelectMode={sendTextCommand} disabled={!isConnected} />
+                                        </div>
+
+                                        <div className="absolute bottom-6 right-6 flex items-center gap-2">
+                                            <div className="flex flex-col items-end">
+                                                <span className="text-[10px] font-bold text-slate-400 uppercase">Vitesse</span>
+                                                <div className="flex bg-slate-100 rounded-lg p-1 mt-1">
+                                                    {[0.8, 1.0, 1.2].map(rate => (
+                                                        <button key={rate} onClick={() => setSpeechRate(rate)} className={`px-2 py-1 text-xs font-bold rounded ${speechRate === rate ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>{rate}x</button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="text-center max-w-md">
+                                        <div className="w-24 h-24 bg-indigo-50 rounded-3xl flex items-center justify-center mx-auto mb-6 text-indigo-600">
+                                            <Mic size={40} />
+                                        </div>
+                                        <h3 className="text-2xl font-bold text-slate-900 mb-3">Prêt à réviser ?</h3>
+                                        <p className="text-slate-500 mb-8 leading-relaxed">Connectez-vous pour démarrer une conversation vocale interactive avec RévizIA. Choisissez un mode et laissez-vous guider.</p>
+                                        <button onClick={connect} className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-xl font-bold text-lg shadow-xl shadow-indigo-200 transition-all hover:-translate-y-1">
+                                            Démarrer la session
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Tab Content: Competences */}
+                        {activeTab === 'competences' && (
+                            <div className="flex-1 bg-white rounded-3xl shadow-sm border border-slate-100 p-8 overflow-y-auto">
+                                <div className="max-w-3xl mx-auto">
+                                    <div className="flex justify-between items-end mb-8">
+                                        <div>
+                                            <h3 className="text-2xl font-bold text-slate-900 mb-2">Suivi des Compétences</h3>
+                                            <p className="text-slate-500">Mise à jour en temps réel par l'IA durant vos sessions.</p>
+                                        </div>
+                                        <div className="bg-slate-50 px-4 py-2 rounded-xl text-right">
+                                            <span className="block text-xs font-bold text-slate-400 uppercase">Score Global</span>
+                                            <span className="text-2xl font-black text-indigo-600">{activeAverage}/100</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-8">
+                                        {activeSkillsList.length > 0 ? (
+                                            activeSkillsList.map((skill, idx) => (
+                                                <ScoreBar key={idx} score={skill.score} label={skill.label} />
+                                            ))
+                                        ) : (
+                                            <div className="text-center py-12 border-2 border-dashed border-slate-100 rounded-2xl">
+                                                <p className="text-slate-400 font-medium">Aucune compétence analysée pour le moment.</p>
+                                                <p className="text-slate-400 text-sm mt-1">Démarrez une session pour que l'IA évalue votre niveau.</p>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {activeCourse.report?.summary && (
+                                        <div className="mt-12 bg-indigo-50/50 rounded-2xl p-6 border border-indigo-100">
+                                            <h4 className="font-bold text-indigo-900 mb-2 flex items-center gap-2">
+                                                <Sparkles size={16} /> Dernier Bilan
+                                            </h4>
+                                            <p className="text-indigo-800/80 leading-relaxed text-sm">
+                                                {activeCourse.report.summary}
+                                            </p>
+                                            <p className="text-xs text-indigo-400 mt-4 font-bold uppercase">
+                                                {new Date(activeCourse.report.timestamp).toLocaleString()}
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Tab Content: Flashcards */}
+                        {activeTab === 'flashcards' && (
+                            <div className="flex-1 bg-white rounded-3xl shadow-sm border border-slate-100 p-8 flex flex-col items-center justify-center relative overflow-hidden">
+                                {activeCourse.flashcards.length > 0 ? (
+                                    <div className="w-full max-w-xl perspective-1000">
+                                        <div className="flex justify-between items-center mb-8">
+                                            <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">Carte {currentCardIndex + 1} / {activeCourse.flashcards.length}</span>
+                                            <button onClick={clearFlashcards} className="text-red-400 hover:text-red-500 text-xs font-bold flex items-center gap-1"><Trash2 size={12}/> Tout effacer</button>
+                                        </div>
+
+                                        <div 
+                                            className="relative h-80 w-full cursor-pointer group"
+                                            onClick={() => setIsFlipped(!isFlipped)}
+                                        >
+                                            <div className={`
+                                                absolute inset-0 w-full h-full duration-500 preserve-3d transition-transform
+                                                ${isFlipped ? 'rotate-y-180' : ''}
+                                            `}>
+                                                {/* Front */}
+                                                <div className="absolute inset-0 backface-hidden bg-slate-900 rounded-3xl shadow-2xl flex flex-col items-center justify-center p-8 text-center border border-slate-700">
+                                                    <span className="bg-slate-800 text-slate-300 px-3 py-1 rounded-full text-xs font-bold mb-6 border border-slate-700">Question</span>
+                                                    <p className="text-2xl font-bold text-white leading-relaxed">
+                                                        {activeCourse.flashcards[currentCardIndex].question}
+                                                    </p>
+                                                    <p className="absolute bottom-6 text-slate-500 text-xs font-bold uppercase tracking-widest animate-pulse">Cliquer pour retourner</p>
+                                                </div>
+
+                                                {/* Back */}
+                                                <div className="absolute inset-0 backface-hidden rotate-y-180 bg-white rounded-3xl shadow-xl shadow-indigo-500/10 flex flex-col items-center justify-center p-8 text-center border-2 border-indigo-100">
+                                                    <span className="bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full text-xs font-bold mb-6">Réponse</span>
+                                                    <p className="text-xl font-medium text-slate-800 leading-relaxed">
+                                                        {activeCourse.flashcards[currentCardIndex].answer}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex justify-center gap-4 mt-8">
+                                            <button 
+                                                onClick={() => {
+                                                    setIsFlipped(false);
+                                                    setCurrentCardIndex(prev => (prev - 1 + activeCourse.flashcards.length) % activeCourse.flashcards.length);
+                                                }}
+                                                className="p-4 rounded-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 shadow-sm transition-all"
+                                            >
+                                                <ArrowLeft size={24} />
+                                            </button>
+                                            <button 
+                                                onClick={() => {
+                                                    setIsFlipped(false);
+                                                    setCurrentCardIndex(prev => (prev + 1) % activeCourse.flashcards.length);
+                                                }}
+                                                className="p-4 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200 transition-all hover:scale-105"
+                                            >
+                                                <ArrowRight size={24} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="text-center max-w-md">
+                                        <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-300">
+                                            <Layers size={32} />
+                                        </div>
+                                        <h3 className="text-xl font-bold text-slate-900 mb-2">Aucune Flashcard</h3>
+                                        <p className="text-slate-500 mb-6">Demandez à l'IA d'en créer via le mode "Flashcards" ou lors de la conversation.</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Tab Content: Cheat Sheet */}
+                        {activeTab === 'cheatsheet' && (
+                            <div className="flex-1 bg-white rounded-3xl shadow-sm border border-slate-100 flex flex-col overflow-hidden">
+                                {activeCourse.cheatSheet ? (
+                                    <>
+                                        <div className="p-4 border-b flex justify-between items-center bg-slate-50">
+                                            <span className="text-sm font-bold text-slate-500 uppercase tracking-wider">Généré par IA</span>
+                                            <div className="flex gap-2">
+                                                <button 
+                                                    onClick={generateCheatSheet}
+                                                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 transition-colors"
+                                                >
+                                                    <RotateCw size={14} className={isGeneratingSheet ? 'animate-spin' : ''} /> Régénérer
+                                                </button>
+                                                <button 
+                                                    onClick={() => generatePDF(`Fiche - ${activeCourse.title}`, activeCourse.cheatSheet || "")}
+                                                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                                                >
+                                                    <Download size={14} /> PDF
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="flex-1 overflow-y-auto p-8 font-serif leading-relaxed text-slate-800 text-lg">
+                                            <div className="max-w-3xl mx-auto prose prose-indigo prose-lg">
+                                                {activeCourse.cheatSheet.split('\n').map((line, i) => {
+                                                    // Simple Markdown rendering for safety and speed
+                                                    if (line.startsWith('# ')) return <h1 key={i} className="text-3xl font-bold text-indigo-900 mb-6 mt-8">{line.replace('# ', '')}</h1>;
+                                                    if (line.startsWith('## ')) return <h2 key={i} className="text-2xl font-bold text-slate-900 mb-4 mt-8 border-b pb-2 border-slate-100">{line.replace('## ', '')}</h2>;
+                                                    if (line.startsWith('### ')) return <h3 key={i} className="text-xl font-bold text-slate-800 mb-3 mt-6">{line.replace('### ', '')}</h3>;
+                                                    if (line.startsWith('- ')) return <li key={i} className="ml-4 list-disc marker:text-indigo-400 pl-2 mb-2">{line.replace('- ', '')}</li>;
+                                                    if (line.trim() === '') return <br key={i} />;
+                                                    return <p key={i} className="mb-4">{line.replace(/\*\*(.*?)\*\*/g, '')}<strong className="font-bold text-slate-900">{line.match(/\*\*(.*?)\*\*/)?.[1]}</strong></p>;
+                                                })}
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                                        <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6 text-indigo-600">
+                                            <FileText size={32} />
+                                        </div>
+                                        <h3 className="text-xl font-bold text-slate-900 mb-2">Fiche de Révision</h3>
+                                        <p className="text-slate-500 mb-8 max-w-sm">Générez une synthèse structurée de votre cours automatiquement grâce à l'IA.</p>
+                                        <button 
+                                            onClick={generateCheatSheet}
+                                            disabled={isGeneratingSheet}
+                                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-indigo-200 transition-all flex items-center gap-2 disabled:opacity-70"
+                                        >
+                                            {isGeneratingSheet ? <Loader2 className="animate-spin" /> : <Sparkles size={18} />}
+                                            Générer la fiche
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
-                  </div>
-                  <div className="flex items-center gap-8">
-                     <button onClick={() => { setIsFlipped(false); setTimeout(() => setCurrentCardIndex(p => (p - 1 + activeCourse.flashcards.length) % activeCourse.flashcards.length), 300); }} className="p-4 rounded-full bg-white border border-slate-100 text-slate-600 hover:text-indigo-600 hover:border-indigo-100 shadow-md hover:shadow-xl transition-all hover:-translate-y-1"><ArrowLeft size={24} /></button>
-                     <button onClick={clearFlashcards} className="p-4 rounded-full text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"><Trash2 size={24} /></button>
-                     <button onClick={() => { setIsFlipped(false); setTimeout(() => setCurrentCardIndex(p => (p + 1) % activeCourse.flashcards.length), 300); }} className="p-4 rounded-full bg-white border border-slate-100 text-slate-600 hover:text-indigo-600 hover:border-indigo-100 shadow-md hover:shadow-xl transition-all hover:-translate-y-1"><ArrowRight size={24} /></button>
-                  </div>
-               </div>
-             )}
-          </div>
-        ) : (
-           // --- TAB: CHEAT SHEET ---
-           <div className="flex flex-col h-full overflow-hidden">
-               {!activeCourse.cheatSheet ? (
-                   <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-white rounded-3xl border border-slate-100 shadow-sm">
-                       <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6 text-indigo-600">
-                           <FileText size={36} />
-                       </div>
-                       <h2 className="text-2xl font-bold text-slate-900 mb-2">Fiche de Révision</h2>
-                       <p className="text-slate-500 mb-8 max-w-md mx-auto">
-                           L'IA peut analyser l'intégralité de vos documents pour générer une fiche de synthèse structurée (définitions, points clés, résumé).
-                       </p>
-                       <button 
-                           onClick={generateCheatSheet}
-                           disabled={isGeneratingSheet}
-                           className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-8 rounded-xl shadow-lg shadow-indigo-200 transition-all flex items-center gap-3 disabled:opacity-70 disabled:cursor-not-allowed"
-                       >
-                           {isGeneratingSheet ? (
-                               <><Loader2 className="animate-spin" /> Génération en cours...</>
-                           ) : (
-                               <><Sparkles size={20} /> Générer la Fiche (IA)</>
-                           )}
-                       </button>
-                       {isGeneratingSheet && <p className="text-xs text-slate-400 mt-4 animate-pulse">Cela peut prendre quelques secondes (Modèle Gemini 3 Pro)...</p>}
-                   </div>
-               ) : (
-                   <div className="flex flex-col h-full bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden relative">
-                       <div className="absolute top-0 right-0 p-4 bg-gradient-to-b from-white via-white to-transparent w-full flex justify-end z-10">
-                           <button 
-                               onClick={() => generatePDF(activeCourse.title, activeCourse.cheatSheet!)}
-                               className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold py-2 px-4 rounded-lg shadow-lg flex items-center gap-2 transition-all"
-                           >
-                               <Download size={14} /> Télécharger PDF
-                           </button>
-                       </div>
-                       <div className="overflow-y-auto p-8 pt-16 h-full font-serif leading-relaxed text-slate-700 space-y-4">
-                            {/* Rendu Markdown simulé pour l'affichage écran */}
-                            {activeCourse.cheatSheet.split('\n').map((line, i) => {
-                                if (line.startsWith('# ')) return <h1 key={i} className="text-3xl font-bold text-indigo-700 mb-4 mt-6 border-b pb-2">{line.replace('# ', '')}</h1>;
-                                if (line.startsWith('## ')) return <h2 key={i} className="text-xl font-bold text-slate-900 mb-3 mt-6">{line.replace('## ', '')}</h2>;
-                                if (line.startsWith('### ')) return <h3 key={i} className="text-lg font-bold text-slate-800 mb-2 mt-4">{line.replace('### ', '')}</h3>;
-                                if (line.trim().startsWith('- ')) return <li key={i} className="ml-4 list-disc marker:text-indigo-400 pl-2">{line.replace('- ', '').replace(/\*\*(.*?)\*\*/g, (match, p1) => p1)}</li>; // Simple bold removal for clean list
-                                if (line.trim() === '') return <br key={i} />;
-                                // Gestion basique du gras (**texte**)
-                                const parts = line.split(/(\*\*.*?\*\*)/g);
-                                return (
-                                    <p key={i} className="text-base">
-                                        {parts.map((part, j) => {
-                                            if (part.startsWith('**') && part.endsWith('**')) {
-                                                return <strong key={j} className="font-bold text-slate-900">{part.slice(2, -2)}</strong>;
-                                            }
-                                            return part;
-                                        })}
-                                    </p>
-                                );
-                            })}
-                       </div>
-                   </div>
-               )}
-           </div>
-        )}
-      </main>
-    </div>
-  );
+                )}
+            </div>
+        </div>
+    );
 }
