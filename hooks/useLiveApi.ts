@@ -48,6 +48,12 @@ export function useLiveApi() {
   const inputSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const sessionPromiseRef = useRef<Promise<any> | null>(null);
   const speechRateRef = useRef(1.0);
+  const isConnectedRef = useRef(false);
+
+  // Sync ref with state
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
 
   // Load Data on Mount
   useEffect(() => {
@@ -350,11 +356,11 @@ export function useLiveApi() {
         mediaStreamRef.current = null;
     }
     if (scriptProcessorRef.current) {
-        scriptProcessorRef.current.disconnect();
+        try { scriptProcessorRef.current.disconnect(); } catch (e) {}
         scriptProcessorRef.current = null;
     }
     if (inputSourceRef.current) {
-        inputSourceRef.current.disconnect();
+        try { inputSourceRef.current.disconnect(); } catch (e) {}
         inputSourceRef.current = null;
     }
     // Check state before closing to avoid "Cannot close a closed AudioContext"
@@ -371,6 +377,8 @@ export function useLiveApi() {
     if (sessionPromiseRef.current) {
         sessionPromiseRef.current.then(s => {
              try { s.close(); } catch(e) { console.warn("Error closing session", e); }
+        }).catch(e => {
+             console.warn("Session promise rejected during cleanup", e);
         });
         sessionPromiseRef.current = null;
     }
@@ -431,11 +439,14 @@ export function useLiveApi() {
                 const processor = inputCtx.createScriptProcessor(4096, 1, 1);
                 scriptProcessorRef.current = processor;
                 processor.onaudioprocess = (e) => {
+                    if (!isConnectedRef.current) return; // Prevent sending if disconnected
                     const inputData = e.inputBuffer.getChannelData(0);
                     let sum = 0; for(let i=0; i<inputData.length; i++) sum += inputData[i]*inputData[i];
                     setVolume(prev => Math.max(Math.sqrt(sum/inputData.length), prev*0.8));
                     const pcmBlob = createPcmBlob(inputData, inputCtx.sampleRate);
-                    sessionPromiseRef.current?.then(s => s.sendRealtimeInput({ media: pcmBlob }));
+                    sessionPromiseRef.current?.then(s => s.sendRealtimeInput({ media: pcmBlob })).catch(err => {
+                        console.warn("Failed to send audio input", err);
+                    });
                 };
                 source.connect(processor); processor.connect(inputCtx.destination);
             },
@@ -480,15 +491,19 @@ export function useLiveApi() {
                 }
 
                 if (msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data) {
-                    const audioBuffer = await decodeAudioData(base64ToUint8Array(msg.serverContent.modelTurn.parts[0].inlineData.data), outputCtx, 24000);
-                    const source = outputCtx.createBufferSource();
-                    source.buffer = audioBuffer;
-                    source.playbackRate.value = speechRateRef.current;
-                    source.connect(outputCtx.destination);
-                    source.addEventListener('ended', () => sourceNodesRef.current.delete(source));
-                    source.start(nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputCtx.currentTime));
-                    nextStartTimeRef.current += audioBuffer.duration / speechRateRef.current;
-                    sourceNodesRef.current.add(source);
+                    try {
+                        const audioBuffer = await decodeAudioData(base64ToUint8Array(msg.serverContent.modelTurn.parts[0].inlineData.data), outputCtx, 24000);
+                        const source = outputCtx.createBufferSource();
+                        source.buffer = audioBuffer;
+                        source.playbackRate.value = speechRateRef.current;
+                        source.connect(outputCtx.destination);
+                        source.addEventListener('ended', () => sourceNodesRef.current.delete(source));
+                        source.start(nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputCtx.currentTime));
+                        nextStartTimeRef.current += audioBuffer.duration / speechRateRef.current;
+                        sourceNodesRef.current.add(source);
+                    } catch (decodeErr) {
+                        console.error("Audio Decode Error", decodeErr);
+                    }
                 }
 
                 if (msg.serverContent?.interrupted) {
@@ -501,14 +516,21 @@ export function useLiveApi() {
                 setIsConnected(false); 
                 setIsStreaming(false); 
             },
-            onerror: (err) => { 
-                console.error("Session Error", err); 
-                setError("Erreur de connexion Live API. Voir console.");
+            onerror: (err: any) => { 
+                console.error("Session Error", err);
+                const msg = err instanceof Error ? err.message : "Erreur connexion Live";
+                setError(msg);
                 cleanup(); 
             }
         }
       });
       sessionPromiseRef.current = sessionPromise;
+      // Catch initial connection rejection
+      sessionPromise.catch(e => {
+           console.error("Initial Connection Promise Rejected", e);
+           setError("La connexion a échoué: " + (e.message || "Erreur réseau"));
+           cleanup();
+      });
     } catch (e: any) { 
         console.error("Connection failed", e);
         setError("Impossible de se connecter: " + e.message);
@@ -517,7 +539,7 @@ export function useLiveApi() {
   }, [cleanup, activeCourseId, courses, language, stopAudioPlayback]);
 
   const disconnect = useCallback(() => cleanup(), [cleanup]);
-  const sendTextCommand = useCallback((text: string) => sessionPromiseRef.current?.then(s => s.sendRealtimeInput({ content: [{ text }] })), []);
+  const sendTextCommand = useCallback((text: string) => sessionPromiseRef.current?.then(s => s.sendRealtimeInput({ content: [{ text }] })).catch(e => console.error("Send Text Error", e)), []);
   const finishSession = useCallback(() => sendTextCommand("Fin de session. Bilan et saveProgress."), [sendTextCommand]);
 
   return {
