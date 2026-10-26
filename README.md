@@ -1,20 +1,29 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# RévizIA
 
-# Run and deploy your AI Studio app
+Assistant de révision vocal : on charge ses cours, on parle avec un professeur IA qui interroge, corrige et suit la progression par compétence.
 
-This contains everything you need to run your app locally.
+## Ce que fait l'application
 
-View your app in AI Studio: https://ai.studio/apps/drive/1Rm9PRYiu7ZVW-Ahde8go2eEh9RfyloRk
+- **Import de cours** : PDF, Word (.docx), OpenDocument (.odt), texte ou Markdown. Le texte extrait devient la seule source de vérité de l'assistant.
+- **Conversation vocale en temps réel** avec l'API Gemini Live (audio natif), en français, anglais ou espagnol.
+- **Cinq modes de révision** : synthèse, quiz, méthode socratique, flashcards, examen blanc.
+- **Suivi des compétences** : le modèle identifie 3 à 6 thèmes clés dans le cours, note la maîtrise de chacun de 0 à 5 et l'enregistre par *function calling* (`saveProgress`).
+- **Flashcards** générées par le modèle (`createFlashcards`), **fiche de synthèse** exportable en PDF, calendrier de révision.
 
-## Run Locally
+## Stack
 
-**Prerequisites:**  Node.js
+React 19, TypeScript, Vite, SDK `@google/genai` (Gemini Live et Gemini Pro), pdf.js, mammoth, jsPDF.
 
+## Lancer en local
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Prérequis : Node.js 20+ et une clé d'API Gemini.
+
+```bash
+npm install
+echo "GEMINI_API_KEY=ta_cle" > .env.local
+npm run dev
+```
+
+## Limites connues
+
+Prototype personnel, construit en décembre 2025 pour réviser mes cours de géopolitique. Les données (cours, scores) restent dans le navigateur ; la clé d'API est utilisée côté client, donc l'application n'est pas faite pour être déployée publiquement en l'état.
